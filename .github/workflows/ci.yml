@@ -149,21 +149,26 @@ jobs:
 
       - name: Create or update Elastic Beanstalk environment
         run: |
-          # Check if environment exists by checking if the query returns exactly the environment name
-          ENV_EXISTS=$(aws elasticbeanstalk describe-environments \
+          # Comprehensive environment check - check if environment actually exists and is ready
+          ENV_INFO=$(aws elasticbeanstalk describe-environments \
             --environment-names ${{ env.EB_ENVIRONMENT_NAME }} \
-            --query 'Environments[0].EnvironmentName' \
-            --output text 2>/dev/null || echo "NOT_FOUND")
+            --query 'Environments[0]' \
+            --output json 2>/dev/null || echo '{}')
           
-          echo "Environment check result: '$ENV_EXISTS'"
+          echo "Environment info: $ENV_INFO"
           
-          if [ "$ENV_EXISTS" = "${{ env.EB_ENVIRONMENT_NAME }}" ]; then
+          # Extract status from the JSON response
+          ENV_STATUS=$(echo $ENV_INFO | jq -r '.Status // "NOT_FOUND"')
+          echo "Environment status: '$ENV_STATUS'"
+          
+          # Only update if environment exists and is in a ready state
+          if [ "$ENV_STATUS" = "Ready" ] || [ "$ENV_STATUS" = "Updating" ] || [ "$ENV_STATUS" = "Launching" ]; then
             echo "Updating existing environment: ${{ env.EB_ENVIRONMENT_NAME }}"
             aws elasticbeanstalk update-environment \
               --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
               --version-label $VERSION_LABEL
           else
-            echo "Creating Elastic Beanstalk environment: ${{ env.EB_ENVIRONMENT_NAME }}"
+            echo "Creating Elastic Beanstalk environment: ${{ env.EB_ENVIRONMENT_NAME }} (status: $ENV_STATUS)"
             aws elasticbeanstalk create-environment \
               --application-name ${{ env.EB_APP_NAME }} \
               --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
@@ -174,6 +179,7 @@ jobs:
                 Namespace=aws:autoscaling:launchconfiguration,OptionName=InstanceType,Value=t3.micro
           fi
 
+          
       - name: Wait for deployment
         run: |
           echo "Waiting for deployment to complete..."

@@ -97,18 +97,16 @@ jobs:
             --application-name ${{ env.EB_APP_NAME }} \
             --description "Spring Boot application"
 
-      - name: Check if Elastic Beanstalk environment exists
-        id: check-eb-env
-        run: |
-          if aws elasticbeanstalk describe-environments \
-            --application-name ${{ env.EB_APP_NAME }} \
-            --environment-names ${{ env.EB_ENVIRONMENT_NAME }} \
-            --query "Environments[].EnvironmentName" \
-            --output text | grep -q "${{ env.EB_ENVIRONMENT_NAME }}"; then
-            echo "env_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "env_exists=false" >> $GITHUB_OUTPUT
-          fi
+          echo "Waiting for application to exist..."
+          for i in {1..30}; do
+            if aws elasticbeanstalk describe-applications --application-names ${{ env.EB_APP_NAME }} >/dev/null 2>&1; then
+              echo "Application exists."
+              break
+            fi
+            echo "Waiting for application to be ready..."
+            sleep 5
+          done
+
 
       - name: Create or use eb-config.json
         id: eb-config

@@ -91,51 +91,55 @@ jobs:
           aws s3 cp $ZIP_FILE s3://${{ env.S3_BUCKET_NAME }}/deployments/$ZIP_FILE
           echo "S3_OBJECT_KEY=deployments/$ZIP_FILE" >> $GITHUB_ENV
 
-      - name: Create Elastic Beanstalk application with retry
+      - name: Debug - List all EB applications
         run: |
-          # Function to check if application exists
-          check_app_exists() {
-            aws elasticbeanstalk describe-applications \
-              --application-names ${{ env.EB_APP_NAME }} \
-              --query 'Applications[0].ApplicationName' \
-              --output text 2>/dev/null
-          }
+          echo "Listing all Elastic Beanstalk applications:"
+          aws elasticbeanstalk describe-applications --query 'Applications[*].ApplicationName' --output table
+
+      - name: Create Elastic Beanstalk application if needed
+        run: |
+          # Check if application exists by listing all and filtering
+          APP_EXISTS=$(aws elasticbeanstalk describe-applications --query "Applications[?ApplicationName=='${{ env.EB_APP_NAME }}'].ApplicationName" --output text)
           
-          # Check if application already exists
-          if check_app_exists; then
+          if [ "$APP_EXISTS" = "${{ env.EB_APP_NAME }}" ]; then
             echo "Application ${{ env.EB_APP_NAME }} already exists"
           else
             echo "Creating Elastic Beanstalk application: ${{ env.EB_APP_NAME }}"
+            # Create application with detailed output
             aws elasticbeanstalk create-application \
               --application-name ${{ env.EB_APP_NAME }} \
               --description "Spring Boot application"
             
-            # Wait and verify application creation with retries
-            echo "Waiting for application to be created..."
-            for i in {1..10}; do
-              if check_app_exists; then
-                echo "Application ${{ env.EB_APP_NAME }} created successfully"
-                break
-              fi
-              echo "Attempt $i: Application not ready yet, waiting..."
-              sleep 5
-            done
+            # Wait and check if application was created
+            sleep 3
+            NEW_APP=$(aws elasticbeanstalk describe-applications --query "Applications[?ApplicationName=='${{ env.EB_APP_NAME }}'].ApplicationName" --output text)
             
-            # Final verification
-            if ! check_app_exists; then
-              echo "ERROR: Failed to create application ${{ env.EB_APP_NAME }} after multiple attempts"
+            if [ "$NEW_APP" = "${{ env.EB_APP_NAME }}" ]; then
+              echo "✅ Application ${{ env.EB_APP_NAME }} created successfully"
+            else
+              echo "❌ ERROR: Failed to create application ${{ env.EB_APP_NAME }}"
+              echo "Available applications:"
+              aws elasticbeanstalk describe-applications --query 'Applications[*].ApplicationName' --output table
               exit 1
             fi
           fi
 
-      - name: Create application version
+      - name: Verify application exists
         run: |
-          # Verify application exists one more time before creating version
-          if ! aws elasticbeanstalk describe-applications --application-names ${{ env.EB_APP_NAME }} --query 'Applications[0].ApplicationName' --output text; then
-            echo "ERROR: Application ${{ env.EB_APP_NAME }} does not exist"
+          echo "Verifying application exists before creating version..."
+          APP_NAME=$(aws elasticbeanstalk describe-applications --query "Applications[?ApplicationName=='${{ env.EB_APP_NAME }}'].ApplicationName" --output text)
+          
+          if [ "$APP_NAME" = "${{ env.EB_APP_NAME }}" ]; then
+            echo "✅ Application verified: $APP_NAME"
+          else
+            echo "❌ ERROR: Application ${{ env.EB_APP_NAME }} not found!"
+            echo "Available applications:"
+            aws elasticbeanstalk describe-applications --query 'Applications[*].ApplicationName' --output table
             exit 1
           fi
-          
+
+      - name: Create application version
+        run: |
           echo "Creating application version: $VERSION_LABEL"
           aws elasticbeanstalk create-application-version \
             --application-name ${{ env.EB_APP_NAME }} \
@@ -146,7 +150,9 @@ jobs:
       - name: Create or update Elastic Beanstalk environment
         run: |
           # Check if environment exists
-          if aws elasticbeanstalk describe-environments --environment-names ${{ env.EB_ENVIRONMENT_NAME }} --query 'Environments[0].EnvironmentName' --output text 2>/dev/null; then
+          ENV_EXISTS=$(aws elasticbeanstalk describe-environments --query "Environments[?EnvironmentName=='${{ env.EB_ENVIRONMENT_NAME }}'].EnvironmentName" --output text)
+          
+          if [ "$ENV_EXISTS" = "${{ env.EB_ENVIRONMENT_NAME }}" ]; then
             echo "Updating existing environment: ${{ env.EB_ENVIRONMENT_NAME }}"
             aws elasticbeanstalk update-environment \
               --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \

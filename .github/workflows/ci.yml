@@ -98,23 +98,22 @@ jobs:
           aws elasticbeanstalk create-application \
             --application-name ${{ env.EB_APP_NAME }} \
             --description "Spring Boot application"
-          
-          echo "Waiting for application to be created..."
-          # Wait and verify application was created
-          for i in {1..12}; do
+
+          echo "Waiting for application to be fully registered..."
+          for i in {1..30}; do
             if aws elasticbeanstalk describe-applications --application-names ${{ env.EB_APP_NAME }} > /dev/null 2>&1; then
-              echo "Application ${{ env.EB_APP_NAME }} successfully created"
+              echo "Application ${{ env.EB_APP_NAME }} is now available"
               break
             fi
-            echo "Waiting for application creation to complete... (attempt $i/12)"
+            echo "Waiting for application... ($i/30)"
             sleep 10
           done
-          
-          # Final verification
+
           if ! aws elasticbeanstalk describe-applications --application-names ${{ env.EB_APP_NAME }} > /dev/null 2>&1; then
-            echo "ERROR: Application ${{ env.EB_APP_NAME }} was not created successfully"
+            echo "ERROR: Application ${{ env.EB_APP_NAME }} still not found after waiting"
             exit 1
           fi
+
       
       - name: Wait for application to be available
         run: |

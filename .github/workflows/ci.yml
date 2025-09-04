@@ -87,6 +87,43 @@ jobs:
         run: |
           aws s3 cp deploy.zip s3://${{ env.S3_BUCKET_NAME }}/deploy-${{ github.sha }}.zip
 
+      - name: Check if Elastic Beanstalk application exists
+        id: check-eb-app
+        run: |
+          if aws elasticbeanstalk describe-applications --application-names ${{ env.EB_APP_NAME }} > /dev/null 2>&1; then
+            echo "app_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "app_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Elastic Beanstalk application if not exists
+        if: steps.check-eb-app.outputs.app_exists == 'false'
+        run: |
+          echo "Creating Elastic Beanstalk application: ${{ env.EB_APP_NAME }}"
+          aws elasticbeanstalk create-application \
+            --application-name ${{ env.EB_APP_NAME }} \
+            --description "Spring Boot application"
+
+      - name: Check if Elastic Beanstalk environment exists
+        id: check-eb-env
+        run: |
+          if aws elasticbeanstalk describe-environments --application-name ${{ env.EB_APP_NAME }} --environment-names ${{ env.EB_ENVIRONMENT_NAME }} --query "Environments[].EnvironmentName" --output text | grep -q "${{ env.EB_ENVIRONMENT_NAME }}"; then
+            echo "env_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "env_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Elastic Beanstalk environment if not exists
+        if: steps.check-eb-env.outputs.env_exists == 'false'
+        run: |
+          echo "Creating Elastic Beanstalk environment: ${{ env.EB_ENVIRONMENT_NAME }}"
+          aws elasticbeanstalk create-environment \
+            --application-name ${{ env.EB_APP_NAME }} \
+            --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
+            --solution-stack-name "64bit Amazon Linux 2023 v4.0.1 running Corretto 17" \
+            --option-settings file://eb-config.json \
+            --version-label ${{ github.sha }}
+
       - name: Create Elastic Beanstalk version
         run: |
           aws elasticbeanstalk create-application-version \
@@ -95,7 +132,8 @@ jobs:
             --source-bundle S3Bucket="${{ env.S3_BUCKET_NAME }}",S3Key="deploy-${{ github.sha }}.zip" \
             --description "Commit: ${{ github.sha }} - ${{ github.commit_message }}"
 
-      - name: Deploy to Elastic Beanstalk
+      - name: Deploy to Elastic Beanstalk environment
+        if: steps.check-eb-env.outputs.env_exists == 'true'
         run: |
           aws elasticbeanstalk update-environment \
             --application-name ${{ env.EB_APP_NAME }} \

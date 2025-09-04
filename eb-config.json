@@ -1,0 +1,16 @@
+[{
+        "Namespace": "aws:elasticbeanstalk:environment",
+        "OptionName": "EnvironmentType",
+        "Value": "SingleInstance"
+    },
+    {
+        "Namespace": "aws:elasticbeanstalk:application:environment",
+        "OptionName": "SERVER_PORT",
+        "Value": "5000"
+    },
+    {
+        "Namespace": "aws:elasticbeanstalk:container:tomcat:jvmoptions",
+        "OptionName": "JVMOptions",
+        "Value": "-Xms512m -Xmx512m"
+    }
+]

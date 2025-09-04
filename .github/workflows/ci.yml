@@ -158,7 +158,9 @@ jobs:
           aws elasticbeanstalk create-environment \
             --application-name ${{ env.EB_APP_NAME }} \
             --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
-            --solution-stack-name "64bit Amazon Linux 2023 v4.0.1 running Corretto 17" \
+            --platform-arn $(aws elasticbeanstalk list-platform-versions \
+            --query "PlatformSummaryList[?PlatformName=='Corretto 17 running on 64bit Amazon Linux 2023'].PlatformArn" \
+            --output text | sort | tail -n 1)
             --option-settings file://eb-config.json \
             --version-label ${{ github.sha }}
 

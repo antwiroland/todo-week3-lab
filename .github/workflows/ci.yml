@@ -172,7 +172,7 @@ jobs:
                   "Value": "enhanced"
                 }
               ]
-            EOF
+          EOF
             echo "config_source=generated" >> $GITHUB_OUTPUT
             cat eb-config.json
           fi

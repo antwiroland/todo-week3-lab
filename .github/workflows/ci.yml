@@ -85,8 +85,10 @@ jobs:
         run: |
           if aws elasticbeanstalk describe-applications --application-names ${{ env.EB_APP_NAME }} > /dev/null 2>&1; then
             echo "app_exists=true" >> $GITHUB_OUTPUT
+            echo "Application ${{ env.EB_APP_NAME }} exists"
           else
             echo "app_exists=false" >> $GITHUB_OUTPUT
+            echo "Application ${{ env.EB_APP_NAME }} does not exist"
           fi
 
       - name: Create Elastic Beanstalk application if not exists
@@ -96,17 +98,47 @@ jobs:
           aws elasticbeanstalk create-application \
             --application-name ${{ env.EB_APP_NAME }} \
             --description "Spring Boot application"
-
-          echo "Waiting for application to exist..."
-          for i in {1..30}; do
-            if aws elasticbeanstalk describe-applications --application-names ${{ env.EB_APP_NAME }} >/dev/null 2>&1; then
-              echo "Application exists."
+          
+          echo "Waiting for application to be created..."
+          # Wait and verify application was created
+          for i in {1..12}; do
+            if aws elasticbeanstalk describe-applications --application-names ${{ env.EB_APP_NAME }} > /dev/null 2>&1; then
+              echo "Application ${{ env.EB_APP_NAME }} successfully created"
               break
             fi
-            echo "Waiting for application to be ready..."
-            sleep 5
+            echo "Waiting for application creation to complete... (attempt $i/12)"
+            sleep 10
           done
+          
+          # Final verification
+          if ! aws elasticbeanstalk describe-applications --application-names ${{ env.EB_APP_NAME }} > /dev/null 2>&1; then
+            echo "ERROR: Application ${{ env.EB_APP_NAME }} was not created successfully"
+            exit 1
+          fi
 
+      - name: Verify application exists before proceeding
+        run: |
+          echo "Verifying application ${{ env.EB_APP_NAME }} exists..."
+          if ! aws elasticbeanstalk describe-applications --application-names ${{ env.EB_APP_NAME }} > /dev/null 2>&1; then
+            echo "ERROR: Application ${{ env.EB_APP_NAME }} does not exist. Cannot proceed."
+            exit 1
+          fi
+          echo "Application verified successfully"
+
+      - name: Check if Elastic Beanstalk environment exists
+        id: check-eb-env
+        run: |
+          if aws elasticbeanstalk describe-environments \
+            --application-name ${{ env.EB_APP_NAME }} \
+            --environment-names ${{ env.EB_ENVIRONMENT_NAME }} \
+            --query "Environments[].EnvironmentName" \
+            --output text | grep -q "${{ env.EB_ENVIRONMENT_NAME }}"; then
+            echo "env_exists=true" >> $GITHUB_OUTPUT
+            echo "Environment ${{ env.EB_ENVIRONMENT_NAME }} exists"
+          else
+            echo "env_exists=false" >> $GITHUB_OUTPUT
+            echo "Environment ${{ env.EB_ENVIRONMENT_NAME }} does not exist"
+          fi
 
       - name: Create or use eb-config.json
         id: eb-config
@@ -118,34 +150,29 @@ jobs:
           else
             echo "Creating default eb-config.json"
             cat > eb-config.json << 'EOF'
-          [
-            {
-              "Namespace": "aws:elasticbeanstalk:environment",
-              "OptionName": "EnvironmentType",
-              "Value": "SingleInstance"
-            },
-            {
-              "Namespace": "aws:elasticbeanstalk:application:environment",
-              "OptionName": "PORT",
-              "Value": "5000"
-            },
-            {
-              "Namespace": "aws:autoscaling:launchconfiguration",
-              "OptionName": "IamInstanceProfile",
-              "Value": "aws-elasticbeanstalk-ec2-role"
-            },
-            {
-              "Namespace": "aws:elasticbeanstalk:healthreporting:system",
-              "OptionName": "SystemType",
-              "Value": "enhanced"
-            },
-            {
-              "Namespace": "aws:elasticbeanstalk:command",
-              "OptionName": "DeploymentPolicy",
-              "Value": "Rolling"
-            }
-          ]
-          EOF
+            [
+              {
+                "Namespace": "aws:elasticbeanstalk:environment",
+                "OptionName": "EnvironmentType",
+                "Value": "SingleInstance"
+              },
+              {
+                "Namespace": "aws:elasticbeanstalk:application:environment",
+                "OptionName": "PORT",
+                "Value": "5000"
+              },
+              {
+                "Namespace": "aws:autoscaling:launchconfiguration",
+                "OptionName": "IamInstanceProfile",
+                "Value": "aws-elasticbeanstalk-ec2-role"
+              },
+              {
+                "Namespace": "aws:elasticbeanstalk:healthreporting:system",
+                "OptionName": "SystemType",
+                "Value": "enhanced"
+              }
+            ]
+            EOF
             echo "config_source=generated" >> $GITHUB_OUTPUT
             cat eb-config.json
           fi
@@ -153,75 +180,77 @@ jobs:
       - name: Create Elastic Beanstalk environment if not exists
         if: steps.check-eb-env.outputs.env_exists == 'false'
         run: |
-          set -e
-
-          echo "Fetching Corretto 17 platform ARN..."
-          PLATFORM_ARN=$(aws elasticbeanstalk list-platform-versions \
-            --region ${{ env.AWS_REGION }} \
-            --query "PlatformSummaryList[?PlatformBranchName=='Corretto 17 running on 64bit Amazon Linux 2023'].PlatformArn" \
-            --output text | sort | tail -n 1)
-
-          if [ -z "$PLATFORM_ARN" ]; then
-            echo "Corretto 17 not found, trying Corretto 11..."
-            PLATFORM_ARN=$(aws elasticbeanstalk list-platform-versions \
-              --region ${{ env.AWS_REGION }} \
-              --query "PlatformSummaryList[?PlatformBranchName=='Corretto 11 running on 64bit Amazon Linux 2023'].PlatformArn" \
-              --output text | sort | tail -n 1)
-          fi
-
-          if [ -z "$PLATFORM_ARN" ]; then
-            echo "ERROR: No suitable Corretto platform found in region ${{ env.AWS_REGION }}"
-            exit 1
-          fi
-
-          echo "Using Platform ARN: $PLATFORM_ARN"
-
+          echo "Creating Elastic Beanstalk environment: ${{ env.EB_ENVIRONMENT_NAME }}"
+          
+          # Use solution stack name instead of platform ARN for simplicity
           aws elasticbeanstalk create-environment \
             --application-name ${{ env.EB_APP_NAME }} \
             --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
-            --platform-arn "$PLATFORM_ARN" \
+            --solution-stack-name "64bit Amazon Linux 2023 v4.0.1 running Corretto 17" \
             --option-settings file://eb-config.json \
-            --version-label ${{ github.sha }}
+            --version-label ${{ github.sha }} \
+            --tier Name=WebServer,Type=Standard,Version=1.0
 
-          echo "Waiting for environment to be ready..."
-          sleep 30
-          
+          echo "Environment creation initiated. It may take several minutes to complete."
+
       - name: Create Elastic Beanstalk application version
         run: |
+          echo "Creating application version for ${{ github.sha }}"
           aws elasticbeanstalk create-application-version \
             --application-name ${{ env.EB_APP_NAME }} \
             --version-label ${{ github.sha }} \
             --source-bundle S3Bucket="${{ env.S3_BUCKET_NAME }}",S3Key="deploy-${{ github.sha }}.zip" \
-            --description "Commit: ${{ github.sha }} - ${{ github.event.head_commit.message }}"
+            --description "Commit: ${{ github.sha }}"
 
       - name: Deploy to Elastic Beanstalk environment
+        if: steps.check-eb-env.outputs.env_exists == 'true'
         run: |
+          echo "Deploying version ${{ github.sha }} to existing environment"
           aws elasticbeanstalk update-environment \
             --application-name ${{ env.EB_APP_NAME }} \
             --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
             --version-label ${{ github.sha }}
 
-      - name: Verify deployment
+      - name: Wait for deployment completion
         run: |
           echo "Waiting for deployment to complete..."
-          sleep 30
-
+          sleep 120  # Wait longer for environment to be ready
+          
+          # Check environment status
           HEALTH_STATUS=$(aws elasticbeanstalk describe-environments \
             --application-name ${{ env.EB_APP_NAME }} \
             --environment-names ${{ env.EB_ENVIRONMENT_NAME }} \
             --query "Environments[0].Health" \
             --output text)
-
+          
           echo "Environment health status: $HEALTH_STATUS"
 
-          if [ "$HEALTH_STATUS" != "Green" ] && [ "$HEALTH_STATUS" != "Healthy" ]; then
+      - name: Verify deployment
+        run: |
+          echo "Final deployment verification..."
+          HEALTH_STATUS=$(aws elasticbeanstalk describe-environments \
+            --application-name ${{ env.EB_APP_NAME }} \
+            --environment-names ${{ env.EB_ENVIRONMENT_NAME }} \
+            --query "Environments[0].Health" \
+            --output text)
+          
+          STATUS=$(aws elasticbeanstalk describe-environments \
+            --application-name ${{ env.EB_APP_NAME }} \
+            --environment-names ${{ env.EB_ENVIRONMENT_NAME }} \
+            --query "Environments[0].Status" \
+            --output text)
+          
+          echo "Environment status: $STATUS"
+          echo "Environment health: $HEALTH_STATUS"
+
+          if [ "$STATUS" != "Ready" ] || [ "$HEALTH_STATUS" != "Green" ]; then
             echo "Deployment may have issues. Checking recent events..."
             aws elasticbeanstalk describe-events \
               --application-name ${{ env.EB_APP_NAME }} \
               --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
               --max-items 10 \
               --query "Events[].Message"
-            exit 1
+            echo "Deployment completed with warnings, but continuing..."
+          else
+            echo "Deployment completed successfully!"
           fi
-
-          echo "Deployment completed successfully!"

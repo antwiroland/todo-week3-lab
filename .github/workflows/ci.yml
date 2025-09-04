@@ -44,6 +44,9 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
+      - name: Checkout code for configuration files
+        uses: actions/checkout@v4
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -113,10 +116,50 @@ jobs:
             echo "env_exists=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Create or use eb-config.json
+        id: eb-config
+        run: |
+          # Check if eb-config.json exists in the repository
+          if [ -f eb-config.json ]; then
+            echo "Using existing eb-config.json from repository"
+            cat eb-config.json
+            echo "config_source=repository" >> $GITHUB_OUTPUT
+          else
+            echo "Creating default eb-config.json"
+            cat > eb-config.json << 'EOF'
+            [
+              {
+                "Namespace": "aws:elasticbeanstalk:environment",
+                "OptionName": "EnvironmentType",
+                "Value": "SingleInstance"
+              },
+              {
+                "Namespace": "aws:elasticbeanstalk:application:environment",
+                "OptionName": "SERVER_PORT",
+                "Value": "5000"
+              },
+              {
+                "Namespace": "aws:autoscaling:launchconfiguration",
+                "OptionName": "IamInstanceProfile",
+                "Value": "aws-elasticbeanstalk-ec2-role"
+              },
+              {
+                "Namespace": "aws:elasticbeanstalk:healthreporting:system",
+                "OptionName": "SystemType",
+                "Value": "enhanced"
+              }
+            ]
+            EOF
+            echo "config_source=generated" >> $GITHUB_OUTPUT
+            cat eb-config.json
+          fi
+
       - name: Create Elastic Beanstalk environment if not exists
         if: steps.check-eb-env.outputs.env_exists == 'false'
         run: |
           echo "Creating Elastic Beanstalk environment: ${{ env.EB_ENVIRONMENT_NAME }}"
+          echo "Using eb-config.json from: ${{ steps.eb-config.outputs.config_source }}"
+          
           aws elasticbeanstalk create-environment \
             --application-name ${{ env.EB_APP_NAME }} \
             --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \

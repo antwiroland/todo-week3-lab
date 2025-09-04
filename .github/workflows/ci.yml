@@ -6,44 +6,27 @@ on:
 
 env:
   AWS_REGION: eu-central-1
-  EB_APP_NAME: spring-boot-eb-demo
-  S3_BUCKET_NAME: beantalk-bucket
-  EB_ENVIRONMENT_NAME: spring-boot-eb-demo-env
+  EB_APP_NAME: 3weeklab
+  S3_BUCKET_NAME: spring-boot-lab-bucket 
+  EB_ENVIRONMENT_NAME: 3weeklab-env
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Setup JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Build and test with Maven
-        run: mvn clean package
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: spring-boot-app
-          path: target/*.jar
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: spring-boot-app
-          path: target/
+      - name: Build with Maven
+        run: mvn clean package -DskipTests
 
       - name: Create deployment package
         run: |
@@ -58,17 +41,11 @@ jobs:
           # Create deployment directory
           mkdir -p deployment
           
-          # Copy JAR file from target/ directory (Maven output location)
+          # Copy JAR file (Maven builds in target/)
           cp target/*.jar deployment/
           
-          # Copy Procfile if it exists, otherwise create a default one
-          if [ -f "Procfile" ]; then
-            cp Procfile deployment/
-          else
-            echo "web: java -jar $(ls deployment/*.jar)" > deployment/Procfile
-          fi
-          
-          # Copy .ebextensions directory if it exists
+          # Copy Procfile and configs
+          cp Procfile deployment/
           cp -r .ebextensions deployment/ 2>/dev/null || true
           
           # Create zip file
@@ -91,170 +68,26 @@ jobs:
           aws s3 cp $ZIP_FILE s3://${{ env.S3_BUCKET_NAME }}/deployments/$ZIP_FILE
           echo "S3_OBJECT_KEY=deployments/$ZIP_FILE" >> $GITHUB_ENV
 
-      - name: Debug - List all EB applications
+      - name: Deploy to Elastic Beanstalk
         run: |
-          echo "Listing all Elastic Beanstalk applications:"
-          aws elasticbeanstalk describe-applications --query 'Applications[*].ApplicationName' --output table
-
-      - name: Create Elastic Beanstalk application if needed
-        run: |
-          # Check if application exists by listing all and filtering
-          APP_EXISTS=$(aws elasticbeanstalk describe-applications --query "Applications[?ApplicationName=='${{ env.EB_APP_NAME }}'].ApplicationName" --output text)
-          
-          if [ "$APP_EXISTS" = "${{ env.EB_APP_NAME }}" ]; then
-            echo "Application ${{ env.EB_APP_NAME }} already exists"
-          else
-            echo "Creating Elastic Beanstalk application: ${{ env.EB_APP_NAME }}"
-            # Create application with detailed output
-            aws elasticbeanstalk create-application \
-              --application-name ${{ env.EB_APP_NAME }} \
-              --description "Spring Boot application"
-            
-            # Wait and check if application was created
-            sleep 3
-            NEW_APP=$(aws elasticbeanstalk describe-applications --query "Applications[?ApplicationName=='${{ env.EB_APP_NAME }}'].ApplicationName" --output text)
-            
-            if [ "$NEW_APP" = "${{ env.EB_APP_NAME }}" ]; then
-              echo "✅ Application ${{ env.EB_APP_NAME }} created successfully"
-            else
-              echo "❌ ERROR: Failed to create application ${{ env.EB_APP_NAME }}"
-              echo "Available applications:"
-              aws elasticbeanstalk describe-applications --query 'Applications[*].ApplicationName' --output table
-              exit 1
-            fi
-          fi
-
-      - name: Verify application exists
-        run: |
-          echo "Verifying application exists before creating version..."
-          APP_NAME=$(aws elasticbeanstalk describe-applications --query "Applications[?ApplicationName=='${{ env.EB_APP_NAME }}'].ApplicationName" --output text)
-          
-          if [ "$APP_NAME" = "${{ env.EB_APP_NAME }}" ]; then
-            echo "✅ Application verified: $APP_NAME"
-          else
-            echo "❌ ERROR: Application ${{ env.EB_APP_NAME }} not found!"
-            echo "Available applications:"
-            aws elasticbeanstalk describe-applications --query 'Applications[*].ApplicationName' --output table
-            exit 1
-          fi
-
-      - name: Create application version
-        run: |
-          echo "Creating application version: $VERSION_LABEL"
+          # Create application version
           aws elasticbeanstalk create-application-version \
             --application-name ${{ env.EB_APP_NAME }} \
             --version-label $VERSION_LABEL \
             --source-bundle S3Bucket=${{ env.S3_BUCKET_NAME }},S3Key=$S3_OBJECT_KEY \
             --description "Spring Boot deployment - Commit: ${{ github.sha }}"
-      
-      - name: Create or update Elastic Beanstalk environment
+          
+          sleep 5
+          
+          # Update environment
+          aws elasticbeanstalk update-environment \
+            --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
+            --version-label $VERSION_LABEL
+
+      - name: Wait for deployment
         run: |
-          # Function to forcefully clean up stuck environment
-          force_cleanup_environment() {
-            echo "Forcefully cleaning up stuck environment: ${{ env.EB_ENVIRONMENT_NAME }}"
-            
-            # Try to terminate the environment with force
-            aws elasticbeanstalk terminate-environment \
-              --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
-              --force-terminate \
-              2>/dev/null || echo "Force termination attempted"
-            
-            sleep 30
-            
-            # Delete the CloudFormation stack directly if it exists
-            STACK_EXISTS=$(aws cloudformation describe-stacks \
-              --stack-name awseb-e-q5bzf6zhrb-stack \
-              --query 'Stacks[0].StackId' \
-              --output text 2>/dev/null || echo "false")
-            
-            if [ "$STACK_EXISTS" != "false" ]; then
-              echo "Deleting stuck CloudFormation stack: awseb-e-q5bzf6zhrb-stack"
-              aws cloudformation delete-stack --stack-name awseb-e-q5bzf6zhrb-stack
-            fi
-            
-            # Wait for cleanup to complete
-            echo "Waiting for cleanup to complete..."
-            sleep 120
-          }
-
-          # Function to create new environment
-          create_new_environment() {
-            echo "Creating new Elastic Beanstalk environment: ${{ env.EB_ENVIRONMENT_NAME }}"
-            
-            # Use simple configuration without complex VPC settings
-            aws elasticbeanstalk create-environment \
-              --application-name ${{ env.EB_APP_NAME }} \
-              --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
-              --solution-stack-name "64bit Amazon Linux 2023 v4.6.4 running Corretto 17" \
-              --version-label $VERSION_LABEL \
-              --option-settings \
-                Namespace=aws:elasticbeanstalk:environment,OptionName=EnvironmentType,Value=SingleInstance \
-                Namespace=aws:autoscaling:launchconfiguration,OptionName=InstanceType,Value=t3.micro \
-                Namespace=aws:elasticbeanstalk:environment,OptionName=ServiceRole,Value=aws-elasticbeanstalk-service-role
-          }
-
-          # Check current environment status
-          ENV_STATUS=$(aws elasticbeanstalk describe-environments \
-            --environment-names ${{ env.EB_ENVIRONMENT_NAME }} \
-            --query 'Environments[0].Status' \
-            --output text 2>/dev/null || echo "NOT_FOUND")
-          
-          echo "Current environment status: $ENV_STATUS"
-          
-          # Handle different states
-          if [ "$ENV_STATUS" = "NOT_FOUND" ]; then
-            echo "Environment does not exist, creating new one..."
-            create_new_environment
-            
-          elif [ "$ENV_STATUS" = "Ready" ] || [ "$ENV_STATUS" = "Updating" ] || [ "$ENV_STATUS" = "Launching" ]; then
-            echo "Environment is healthy, updating version..."
-            aws elasticbeanstalk update-environment \
-              --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
-              --version-label $VERSION_LABEL
-              
-          elif [ "$ENV_STATUS" = "CREATE_FAILED" ] || [ "$ENV_STATUS" = "Terminated" ] || [ "$ENV_STATUS" = "Terminating" ]; then
-            echo "Environment is in failed state, performing forced cleanup..."
-            force_cleanup_environment
-            echo "Creating new environment after cleanup..."
-            create_new_environment
-            
-          else
-            echo "Unknown status ($ENV_STATUS), attempting to update..."
-            aws elasticbeanstalk update-environment \
-              --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
-              --version-label $VERSION_LABEL \
-              2>/dev/null || {
-                echo "Update failed, performing forced cleanup and recreation..."
-                force_cleanup_environment
-                create_new_environment
-              }
-          fi
-
-          # Wait for environment to stabilize
-          echo "Waiting for environment operation to complete..."
-          sleep 60
-          
-      - name: Get Elastic Beanstalk environment URL
-        run: |
-          echo "Waiting for environment to be ready..."
-          sleep 30
-          
-          # Get the environment endpoint URL
-          EB_URL=$(aws elasticbeanstalk describe-environments \
-            --environment-names ${{ env.EB_ENVIRONMENT_NAME }} \
-            --query 'Environments[0].CNAME' \
-            --output text)
-          
-          echo "Elastic Beanstalk Environment URL: $EB_URL"
-          echo "Your application should be available at: http://$EB_URL"
-          
-          # Also output the status for debugging
-          EB_STATUS=$(aws elasticbeanstalk describe-environments \
-            --environment-names ${{ env.EB_ENVIRONMENT_NAME }} \
-            --query 'Environments[0].Status' \
-            --output text)
-          
-          echo "Environment Status: $EB_STATUS"
+          echo "Waiting for deployment to complete..."
+          sleep 120
 
       - name: Check deployment status
         run: |

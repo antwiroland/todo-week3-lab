@@ -44,7 +44,7 @@ jobs:
         with:
           name: spring-boot-app
           path: target/
-          
+
       - name: Create deployment package
         run: |
           # Create timestamp for versioning
@@ -93,6 +93,14 @@ jobs:
 
       - name: Deploy to Elastic Beanstalk
         run: |
+          # Check if application exists, create if it doesn't
+          if ! aws elasticbeanstalk describe-applications --application-names ${{ env.EB_APP_NAME }} 2>/dev/null; then
+            echo "Creating Elastic Beanstalk application: ${{ env.EB_APP_NAME }}"
+            aws elasticbeanstalk create-application \
+              --application-name ${{ env.EB_APP_NAME }} \
+              --description "Spring Boot application"
+          fi
+          
           # Create application version
           aws elasticbeanstalk create-application-version \
             --application-name ${{ env.EB_APP_NAME }} \
@@ -102,10 +110,25 @@ jobs:
           
           sleep 5
           
-          # Update environment
-          aws elasticbeanstalk update-environment \
-            --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
-            --version-label $VERSION_LABEL
+          # Check if environment exists, create if it doesn't
+          if ! aws elasticbeanstalk describe-environments --environment-names ${{ env.EB_ENVIRONMENT_NAME }} 2>/dev/null; then
+            echo "Creating Elastic Beanstalk environment: ${{ env.EB_ENVIRONMENT_NAME }}"
+            aws elasticbeanstalk create-environment \
+              --application-name ${{ env.EB_APP_NAME }} \
+              --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
+              --solution-stack-name "64bit Amazon Linux 2023 v4.0.1 running Corretto 17" \
+              --option-settings file://eb-config.json 2>/dev/null || \
+            aws elasticbeanstalk create-environment \
+              --application-name ${{ env.EB_APP_NAME }} \
+              --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
+              --solution-stack-name "64bit Amazon Linux 2023 v4.0.1 running Corretto 17" \
+              --tier Name=WebServer,Type=Standard
+          else
+            # Update existing environment
+            aws elasticbeanstalk update-environment \
+              --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
+              --version-label $VERSION_LABEL
+          fi
 
       - name: Wait for deployment
         run: |

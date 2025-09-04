@@ -161,7 +161,7 @@ jobs:
           echo "Fetching Corretto 17 platform ARN..."
           PLATFORM_ARN=$(aws elasticbeanstalk list-platform-versions \
             --region ${{ env.AWS_REGION }} \
-            --query "PlatformSummaryList[?PlatformName!=null && starts_with(PlatformName, 'Corretto 17 running on 64bit Amazon Linux 2023')].PlatformArn" \
+            --query "PlatformSummaryList[?PlatformName!=null && starts_with(PlatformName, 'Corretto 11 running on 64bit Amazon Linux 2023')].PlatformArn" \
             --output text | sort | tail -n 1)
 
           if [ -z "$PLATFORM_ARN" ]; then

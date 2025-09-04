@@ -121,37 +121,37 @@ jobs:
           else
             echo "Creating default eb-config.json"
             cat > eb-config.json << 'EOF'
-[
-  {
-    "Namespace": "aws:elasticbeanstalk:environment",
-    "OptionName": "EnvironmentType",
-    "Value": "SingleInstance"
-  },
-  {
-    "Namespace": "aws:elasticbeanstalk:application:environment",
-    "OptionName": "PORT",
-    "Value": "5000"
-  },
-  {
-    "Namespace": "aws:autoscaling:launchconfiguration",
-    "OptionName": "IamInstanceProfile",
-    "Value": "aws-elasticbeanstalk-ec2-role"
-  },
-  {
-    "Namespace": "aws:elasticbeanstalk:healthreporting:system",
-    "OptionName": "SystemType",
-    "Value": "enhanced"
-  },
-  {
-    "Namespace": "aws:elasticbeanstalk:command",
-    "OptionName": "DeploymentPolicy",
-    "Value": "Rolling"
-  }
-]
-EOF
-            echo "config_source=generated" >> $GITHUB_OUTPUT
-            cat eb-config.json
-          fi
+            [
+              {
+                "Namespace": "aws:elasticbeanstalk:environment",
+                "OptionName": "EnvironmentType",
+                "Value": "SingleInstance"
+              },
+              {
+                "Namespace": "aws:elasticbeanstalk:application:environment",
+                "OptionName": "PORT",
+                "Value": "5000"
+              },
+              {
+                "Namespace": "aws:autoscaling:launchconfiguration",
+                "OptionName": "IamInstanceProfile",
+                "Value": "aws-elasticbeanstalk-ec2-role"
+              },
+              {
+                "Namespace": "aws:elasticbeanstalk:healthreporting:system",
+                "OptionName": "SystemType",
+                "Value": "enhanced"
+              },
+              {
+                "Namespace": "aws:elasticbeanstalk:command",
+                "OptionName": "DeploymentPolicy",
+                "Value": "Rolling"
+              }
+            ]
+            EOF
+                echo "config_source=generated" >> $GITHUB_OUTPUT
+                cat eb-config.json
+              fi
 
       - name: Create Elastic Beanstalk environment if not exists
         if: steps.check-eb-env.outputs.env_exists == 'false'

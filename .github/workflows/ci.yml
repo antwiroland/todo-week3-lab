@@ -156,18 +156,25 @@ jobs:
       - name: Create Elastic Beanstalk environment if not exists
         if: steps.check-eb-env.outputs.env_exists == 'false'
         run: |
-          echo "Checking for Corretto 17 platform ARN..."
+          set -e
+
+          echo "Fetching Corretto 17 platform ARN..."
           PLATFORM_ARN=$(aws elasticbeanstalk list-platform-versions \
             --region ${{ env.AWS_REGION }} \
-            --query "PlatformSummaryList[?contains(PlatformName, 'Corretto 17 running on 64bit Amazon Linux 2023')].PlatformArn" \
+            --query "PlatformSummaryList[?PlatformName!=null && starts_with(PlatformName, 'Corretto 17 running on 64bit Amazon Linux 2023')].PlatformArn" \
             --output text | sort | tail -n 1)
 
           if [ -z "$PLATFORM_ARN" ]; then
-            echo "Corretto 17 not found, falling back to Corretto 11..."
+            echo "Corretto 17 not found, trying Corretto 11..."
             PLATFORM_ARN=$(aws elasticbeanstalk list-platform-versions \
               --region ${{ env.AWS_REGION }} \
-              --query "PlatformSummaryList[?contains(PlatformName, 'Corretto 11 running on 64bit Amazon Linux 2023')].PlatformArn" \
+              --query "PlatformSummaryList[?PlatformName!=null && starts_with(PlatformName, 'Corretto 11 running on 64bit Amazon Linux 2023')].PlatformArn" \
               --output text | sort | tail -n 1)
+          fi
+
+          if [ -z "$PLATFORM_ARN" ]; then
+            echo "ERROR: No suitable Corretto platform found in region ${{ env.AWS_REGION }}"
+            exit 1
           fi
 
           echo "Using Platform ARN: $PLATFORM_ARN"
@@ -175,7 +182,7 @@ jobs:
           aws elasticbeanstalk create-environment \
             --application-name ${{ env.EB_APP_NAME }} \
             --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
-            --platform-arn $PLATFORM_ARN \
+            --platform-arn "$PLATFORM_ARN" \
             --option-settings file://eb-config.json \
             --version-label ${{ github.sha }}
 

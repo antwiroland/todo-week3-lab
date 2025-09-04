@@ -177,6 +177,24 @@ jobs:
             cat eb-config.json
           fi
 
+
+      - name: Wait for application to be available
+        run: |
+          echo "Waiting for Elastic Beanstalk application ${{ env.EB_APP_NAME }} to be ready..."
+          for i in {1..12}; do
+            if aws elasticbeanstalk describe-applications --application-names ${{ env.EB_APP_NAME }} > /dev/null 2>&1; then
+              echo "Application ${{ env.EB_APP_NAME }} is now available"
+              break
+            fi
+            echo "Waiting... ($i/12)"
+            sleep 10
+          done
+
+          if ! aws elasticbeanstalk describe-applications --application-names ${{ env.EB_APP_NAME }} > /dev/null 2>&1; then
+            echo "ERROR: Application ${{ env.EB_APP_NAME }} still not found after waiting"
+            exit 1
+          fi
+
       - name: Create Elastic Beanstalk environment if not exists
         if: steps.check-eb-env.outputs.env_exists == 'false'
         run: |

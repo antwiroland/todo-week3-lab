@@ -44,7 +44,7 @@ jobs:
         with:
           name: spring-boot-app
           path: target/
-
+          
       - name: Create deployment package
         run: |
           # Create timestamp for versioning
@@ -61,8 +61,14 @@ jobs:
           # Copy JAR file from target/ directory (Maven output location)
           cp target/*.jar deployment/
           
-          # Copy Procfile and configs
-          cp Procfile deployment/
+          # Copy Procfile if it exists, otherwise create a default one
+          if [ -f "Procfile" ]; then
+            cp Procfile deployment/
+          else
+            echo "web: java -jar $(ls deployment/*.jar)" > deployment/Procfile
+          fi
+          
+          # Copy .ebextensions directory if it exists
           cp -r .ebextensions deployment/ 2>/dev/null || true
           
           # Create zip file

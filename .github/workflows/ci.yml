@@ -2,7 +2,7 @@ name: Deploy Spring Boot to AWS Elastic Beanstalk
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
 
 env:
   AWS_REGION: eu-central-1

@@ -185,6 +185,28 @@ jobs:
           echo "Waiting for deployment to complete..."
           sleep 120
 
+      - name: Get Elastic Beanstalk environment URL
+        run: |
+          echo "Waiting for environment to be ready..."
+          sleep 30
+          
+          # Get the environment endpoint URL
+          EB_URL=$(aws elasticbeanstalk describe-environments \
+            --environment-names ${{ env.EB_ENVIRONMENT_NAME }} \
+            --query 'Environments[0].CNAME' \
+            --output text)
+          
+          echo "Elastic Beanstalk Environment URL: $EB_URL"
+          echo "Your application should be available at: http://$EB_URL"
+          
+          # Also output the status for debugging
+          EB_STATUS=$(aws elasticbeanstalk describe-environments \
+            --environment-names ${{ env.EB_ENVIRONMENT_NAME }} \
+            --query 'Environments[0].Status' \
+            --output text)
+          
+          echo "Environment Status: $EB_STATUS"
+
       - name: Check deployment status
         run: |
           aws elasticbeanstalk describe-environments \

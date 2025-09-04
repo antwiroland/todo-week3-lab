@@ -153,6 +153,42 @@ jobs:
           create_environment() {
             echo "Creating Elastic Beanstalk environment: ${{ env.EB_ENVIRONMENT_NAME }}"
             
+            # Get default VPC ID
+            VPC_ID=$(aws ec2 describe-vpcs \
+              --filters "Name=isDefault,Values=true" \
+              --query "Vpcs[0].VpcId" \
+              --output text)
+            
+            if [ "$VPC_ID" = "None" ]; then
+              echo "No default VPC found, creating one..."
+              VPC_ID=$(aws ec2 create-default-vpc --query 'Vpc.VpcId' --output text)
+              echo "Created default VPC: $VPC_ID"
+              sleep 10 # Wait for VPC to be ready
+            fi
+            
+            # Get available subnets in the default VPC
+            SUBNETS=$(aws ec2 describe-subnets \
+              --filters "Name=vpc-id,Values=$VPC_ID" \
+              --query "Subnets[*].SubnetId" \
+              --output text | tr '\t' ',')
+            
+            if [ -z "$SUBNETS" ]; then
+              echo "No subnets found in VPC $VPC_ID, creating default subnets..."
+              # Create default subnets in all availability zones
+              AZS=$(aws ec2 describe-availability-zones --query "AvailabilityZones[*].ZoneName" --output text)
+              for AZ in $AZS; do
+                aws ec2 create-default-subnet --availability-zone $AZ
+              done
+              sleep 10 # Wait for subnets to be created
+              SUBNETS=$(aws ec2 describe-subnets \
+                --filters "Name=vpc-id,Values=$VPC_ID" \
+                --query "Subnets[*].SubnetId" \
+                --output text | tr '\t' ',')
+            fi
+            
+            echo "Using VPC: $VPC_ID"
+            echo "Using subnets: $SUBNETS"
+            
             # Create service role for Elastic Beanstalk if it doesn't exist
             if ! aws iam get-role --role-name aws-elasticbeanstalk-service-role 2>/dev/null; then
               echo "Creating Elastic Beanstalk service role..."
@@ -225,6 +261,7 @@ jobs:
             # Wait for roles to be ready
             sleep 10
             
+            # Create environment with VPC and subnet configuration
             aws elasticbeanstalk create-environment \
               --application-name ${{ env.EB_APP_NAME }} \
               --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
@@ -234,7 +271,13 @@ jobs:
                 Namespace=aws:elasticbeanstalk:environment,OptionName=EnvironmentType,Value=SingleInstance \
                 Namespace=aws:autoscaling:launchconfiguration,OptionName=InstanceType,Value=t3.micro \
                 Namespace=aws:autoscaling:launchconfiguration,OptionName=IamInstanceProfile,Value=aws-elasticbeanstalk-ec2-role \
-                Namespace=aws:elasticbeanstalk:environment,OptionName=ServiceRole,Value=aws-elasticbeanstalk-service-role
+                Namespace=aws:elasticbeanstalk:environment,OptionName=ServiceRole,Value=aws-elasticbeanstalk-service-role \
+                Namespace=aws:ec2:vpc,OptionName=VPCId,Value=$VPC_ID \
+                Namespace=aws:ec2:vpc,OptionName=Subnets,Value=$SUBNETS \
+                Namespace=aws:ec2:vpc,OptionName=ELBSubnets,Value=$SUBNETS \
+                Namespace=aws:autoscaling:asg,OptionName=Availability Zones,Value=Any 1 \
+                Namespace=aws:autoscaling:asg,OptionName=MinSize,Value=1 \
+                Namespace=aws:autoscaling:asg,OptionName=MaxSize,Value=1
           }
           
           # Check if environment exists and is in a valid state (not terminated)
@@ -255,6 +298,113 @@ jobs:
             echo "Environment does not exist or is terminated (status: $ENV_STATUS), creating: ${{ env.EB_ENVIRONMENT_NAME }}"
             create_environment
           fi
+              run: |
+                # Function to create environment
+                create_environment() {
+                  echo "Creating Elastic Beanstalk environment: ${{ env.EB_ENVIRONMENT_NAME }}"
+                  
+                  # Create service role for Elastic Beanstalk if it doesn't exist
+                  if ! aws iam get-role --role-name aws-elasticbeanstalk-service-role 2>/dev/null; then
+                    echo "Creating Elastic Beanstalk service role..."
+                    aws iam create-role \
+                      --role-name aws-elasticbeanstalk-service-role \
+                      --assume-role-policy-document '{
+                        "Version": "2012-10-17",
+                        "Statement": [
+                          {
+                            "Effect": "Allow",
+                            "Principal": {
+                              "Service": "elasticbeanstalk.amazonaws.com"
+                            },
+                            "Action": "sts:AssumeRole"
+                          }
+                        ]
+                      }'
+                    
+                    # Attach the necessary policies
+                    aws iam attach-role-policy \
+                      --role-name aws-elasticbeanstalk-service-role \
+                      --policy-arn arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkEnhancedHealth
+                    
+                    aws iam attach-role-policy \
+                      --role-name aws-elasticbeanstalk-service-role \
+                      --policy-arn arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkService
+                  fi
+                  
+                  # Create instance profile if it doesn't exist
+                  if ! aws iam get-instance-profile --instance-profile-name aws-elasticbeanstalk-ec2-role 2>/dev/null; then
+                    echo "Creating EC2 instance profile..."
+                    # Create EC2 role
+                    aws iam create-role \
+                      --role-name aws-elasticbeanstalk-ec2-role \
+                      --assume-role-policy-document '{
+                        "Version": "2012-10-17",
+                        "Statement": [
+                          {
+                            "Effect": "Allow",
+                            "Principal": {
+                              "Service": "ec2.amazonaws.com"
+                            },
+                            "Action": "sts:AssumeRole"
+                          }
+                        ]
+                      }'
+                    
+                    # Attach basic policies for EC2
+                    aws iam attach-role-policy \
+                      --role-name aws-elasticbeanstalk-ec2-role \
+                      --policy-arn arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier
+                    
+                    aws iam attach-role-policy \
+                      --role-name aws-elasticbeanstalk-ec2-role \
+                      --policy-arn arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker
+                    
+                    aws iam attach-role-policy \
+                      --role-name aws-elasticbeanstalk-ec2-role \
+                      --policy-arn arn:aws:iam::aws:policy/AWSElasticBeanstalkWorkerTier
+                    
+                    # Create instance profile and add role
+                    aws iam create-instance-profile \
+                      --instance-profile-name aws-elasticbeanstalk-ec2-role
+                    
+                    aws iam add-role-to-instance-profile \
+                      --instance-profile-name aws-elasticbeanstalk-ec2-role \
+                      --role-name aws-elasticbeanstalk-ec2-role
+                  fi
+                  
+                  # Wait for roles to be ready
+                  sleep 10
+                  
+                  aws elasticbeanstalk create-environment \
+                    --application-name ${{ env.EB_APP_NAME }} \
+                    --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
+                    --solution-stack-name "64bit Amazon Linux 2023 v4.6.4 running Corretto 17" \
+                    --version-label $VERSION_LABEL \
+                    --option-settings \
+                      Namespace=aws:elasticbeanstalk:environment,OptionName=EnvironmentType,Value=SingleInstance \
+                      Namespace=aws:autoscaling:launchconfiguration,OptionName=InstanceType,Value=t3.micro \
+                      Namespace=aws:autoscaling:launchconfiguration,OptionName=IamInstanceProfile,Value=aws-elasticbeanstalk-ec2-role \
+                      Namespace=aws:elasticbeanstalk:environment,OptionName=ServiceRole,Value=aws-elasticbeanstalk-service-role
+                }
+                
+                # Check if environment exists and is in a valid state (not terminated)
+                ENV_STATUS=$(aws elasticbeanstalk describe-environments \
+                  --environment-names ${{ env.EB_ENVIRONMENT_NAME }} \
+                  --query 'Environments[0].Status' \
+                  --output text 2>/dev/null || echo "NOT_FOUND")
+                
+                echo "Environment status: $ENV_STATUS"
+                
+                # Only update if environment exists and is not terminated
+                if [ "$ENV_STATUS" = "Ready" ] || [ "$ENV_STATUS" = "Updating" ] || [ "$ENV_STATUS" = "Launching" ]; then
+                  echo "Environment exists and is active, updating: ${{ env.EB_ENVIRONMENT_NAME }}"
+                  aws elasticbeanstalk update-environment \
+                    --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
+                    --version-label $VERSION_LABEL
+                else
+                  echo "Environment does not exist or is terminated (status: $ENV_STATUS), creating: ${{ env.EB_ENVIRONMENT_NAME }}"
+                  create_environment
+                fi
      
       - name: Wait for deployment
         run: |

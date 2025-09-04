@@ -186,7 +186,7 @@ jobs:
           aws elasticbeanstalk create-environment \
             --application-name ${{ env.EB_APP_NAME }} \
             --environment-name ${{ env.EB_ENVIRONMENT_NAME }} \
-            --solution-stack-name "64bit Amazon Linux 2023 v4.0.1 running Corretto 17" \
+            --solution-stack-name "64bit Amazon Linux 2023 v4.6.4 running Corretto 17" \
             --option-settings file://eb-config.json \
             --version-label ${{ github.sha }} \
             --tier Name=WebServer,Type=Standard,Version=1.0

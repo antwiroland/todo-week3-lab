@@ -5,8 +5,8 @@ on:
     branches: [ main ]
 
 env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: ecs-cicd-app
+  AWS_REGION: eu-central-1
+  ECR_REPOSITORY: ecs-cicd-lab
 
 jobs:
   build-and-push:

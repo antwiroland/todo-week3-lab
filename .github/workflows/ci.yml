@@ -2,7 +2,7 @@ name: Build, Push to ECR and Generate Deployment Artifacts
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "main" ]
 
 permissions:
   id-token: write

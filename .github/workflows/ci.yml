@@ -6,7 +6,7 @@ on:
 
 env:
   AWS_REGION: eu-central-1
-  ECR_REPOSITORY: ecs-cicd-lab
+  ECR_REPOSITORY: java-full-stack
 
 jobs:
   build-and-push:

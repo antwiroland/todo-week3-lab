@@ -22,12 +22,19 @@ jobs:
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
-        java-version: '17'  # Changed from 11 to 17
-        distribution: 'temurin'  # Changed from adopt to temurin (recommended)
+        java-version: '17'
+        distribution: 'temurin'
         cache: maven
 
     - name: Build with Maven
-      run: mvn -B clean package --file pom.xml
+      run: |
+        # Ensure mvnw is executable if using Maven wrapper
+        if [ -f "mvnw" ]; then
+          chmod +x mvnw
+          ./mvnw -B clean package
+        else
+          mvn -B clean package
+        fi
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
@@ -44,7 +51,15 @@ jobs:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
+        # Build the Docker image
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        
+        # Push the specific tag
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        
+        # Also tag as latest and push
         docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        
+        # Output the image URI for reference
+        echo "Image pushed to: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"

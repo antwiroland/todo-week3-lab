@@ -31,10 +31,6 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # If you use mvnw, uncomment the next line
-      # - name: Make Maven wrapper executable
-      #   run: chmod +x mvnw
-
       - name: Build with Maven
         run: mvn clean package -DskipTests
 
@@ -42,7 +38,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: eu-west-1
+          aws-region: eu-central-1
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -63,11 +59,11 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
-          AWS_REGION: eu-central-1
+          AWS_REGION: eu-central-1  
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
-          # Create appspec.yml (use family name, not ARN)
+          # Create appspec.yml
           cat > appspec.yml << EOF
           version: 0.0
           Resources:

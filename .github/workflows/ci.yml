@@ -68,23 +68,21 @@ jobs:
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
           AWS_REGION: eu-central-1  
         run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-
-          # Create appspec.yml
+          # Create appspec.yml (version: 1 with <TASK_DEFINITION> placeholder)
           cat > appspec.yml << EOF
-          version: 0.0
+          version: 1
           Resources:
             - TargetService:
                 Type: AWS::ECS::Service
                 Properties:
-                  TaskDefinition: "java-full-stack-Task"
+                  TaskDefinition: <TASK_DEFINITION>
                   LoadBalancerInfo:
                     ContainerName: "java-full-stack-Container"
                     ContainerPort: 8080
           EOF
 
-                    # Create taskdef.json
-                    cat > taskdef.json << EOF
+          # Create taskdef.json (matches ECS task family + container setup)
+          cat > taskdef.json << EOF
           {
             "family": "java-full-stack-Task",
             "networkMode": "awsvpc",
@@ -124,20 +122,15 @@ jobs:
           }
           EOF
 
-          # Register task definition with ECS
-          aws ecs register-task-definition --cli-input-json file://taskdef.json
-
-          # ZIP files into deployment-artifacts.zip at root
+          # Package artifacts into a single zip
           zip -j deployment-artifacts.zip appspec.yml taskdef.json
           echo "Generated deployment-artifacts.zip contents:"
           unzip -l deployment-artifacts.zip
 
-      # Step 9: Upload deployment artifacts to S3
+      # Step 9: Upload deployment artifacts to S3 (pipeline SourceArtifact bucket)
       - name: Upload Deployment Artifacts to S3
         run: |
           aws s3 cp deployment-artifacts.zip s3://${{ secrets.ARTIFACT_BUCKET }}/deployment-artifacts/latest.zip
-          aws s3 cp appspec.yml s3://${{ secrets.ARTIFACT_BUCKET }}/deployment-artifacts/
-          aws s3 cp taskdef.json s3://${{ secrets.ARTIFACT_BUCKET }}/deployment-artifacts/
 
       # Step 10: Trigger CodePipeline execution
       - name: Trigger CodePipeline Execution

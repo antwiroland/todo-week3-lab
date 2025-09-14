@@ -65,9 +65,9 @@ jobs:
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
           AWS_REGION: eu-central-1
         run: |
-          # appspec.yml MUST use version 0.0
+          # appspec.yml MUST use version 0.0 for ECS
           cat > appspec.yml << EOF
-          version: 1.0
+          version: 0.0
           Resources:
             - TargetService:
                 Type: AWS::ECS::Service

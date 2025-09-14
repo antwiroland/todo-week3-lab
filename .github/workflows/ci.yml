@@ -13,11 +13,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Checkout repository
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Step 2: Cache Maven dependencies
       - name: Cache Maven packages
         uses: actions/cache@v4
         with:
@@ -26,30 +24,25 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      # Step 3: Set up JDK 17
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      # Step 4: Build with Maven
       - name: Build with Maven
         run: mvn clean package -DskipTests
 
-      # Step 5: Configure AWS Credentials via OIDC
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: eu-central-1
 
-      # Step 6: Login to ECR
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Step 7: Build, tag, and push image
       - name: Build, tag, and push Docker image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -58,72 +51,84 @@ jobs:
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-      # Step 8: Generate ECS deployment artifacts
       - name: Generate Deployment Artifacts
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
           AWS_REGION: eu-central-1
         run: |
-          # appspec.yml MUST use version 0.0 for ECS
-          cat > appspec.yml << EOF
-          version: 0.0
-          Resources:
-            - TargetService:
-                Type: AWS::ECS::Service
-                Properties:
-                  TaskDefinition: "java-full-stack-Task"
-                  LoadBalancerInfo:
-                    ContainerName: "java-full-stack-Container"
-                    ContainerPort: 8080
-          EOF
+          # Create appspec.yml
+          cat > appspec.yml << 'APP_SPEC'
+            version: 0.0
+            Resources:
+              - TargetService:
+                  Type: AWS::ECS::Service
+                  Properties:
+                    TaskDefinition: "java-full-stack-Task"
+                    LoadBalancerInfo:
+                      ContainerName: "java-full-stack-Container"
+                      ContainerPort: 8080
+            APP_SPEC
 
-          # Task definition JSON
-          cat > taskdef.json << EOF
-          {
-            "family": "java-full-stack-Task",
-            "networkMode": "awsvpc",
-            "requiresCompatibilities": ["FARGATE"],
-            "cpu": "256",
-            "memory": "512",
-            "executionRoleArn": "${{ secrets.TASK_EXECUTION_ROLE_ARN }}",
-            "taskRoleArn": "${{ secrets.TASK_ROLE_ARN }}",
-            "containerDefinitions": [
-              {
-                "name": "java-full-stack-Container",
-                "image": "$ECR_REGISTRY/$ECR_REPOSITORY:latest",
-                "essential": true,
-                "portMappings": [
-                  { "containerPort": 8080, "protocol": "tcp" }
-                ],
-                "healthCheck": {
-                  "command": ["CMD-SHELL", "curl -f http://localhost:8080/ || exit 1"],
-                  "interval": 30,
-                  "timeout": 5,
-                  "retries": 3,
-                  "startPeriod": 60
-                },
-                "logConfiguration": {
-                  "logDriver": "awslogs",
-                  "options": {
-                    "awslogs-group": "/ecs/java-full-stack",
-                    "awslogs-region": "$AWS_REGION",
-                    "awslogs-stream-prefix": "ecs"
+                      # Create taskdef.json
+                      cat > taskdef.json << 'TASKDEF'
+            {
+              "family": "java-full-stack-Task",
+              "networkMode": "awsvpc",
+              "requiresCompatibilities": ["FARGATE"],
+              "cpu": "256",
+              "memory": "512",
+              "executionRoleArn": "$TASK_EXECUTION_ROLE_ARN",
+              "taskRoleArn": "$TASK_ROLE_ARN",
+              "containerDefinitions": [
+                {
+                  "name": "java-full-stack-Container",
+                  "image": "$ECR_REGISTRY/$ECR_REPOSITORY:latest",
+                  "essential": true,
+                  "portMappings": [
+                    { "containerPort": 8080, "protocol": "tcp" }
+                  ],
+                  "healthCheck": {
+                    "command": ["CMD-SHELL", "curl -f http://localhost:8080/ || exit 1"],
+                    "interval": 30,
+                    "timeout": 5,
+                    "retries": 3,
+                    "startPeriod": 60
+                  },
+                  "logConfiguration": {
+                    "logDriver": "awslogs",
+                    "options": {
+                      "awslogs-group": "/ecs/java-full-stack",
+                      "awslogs-region": "$AWS_REGION",
+                      "awslogs-stream-prefix": "ecs"
+                    }
                   }
                 }
-              }
-            ]
-          }
-          EOF
+              ]
+            }
+            TASKDEF
 
-          # Package artifacts into a single zip
+          # Replace environment variables in taskdef.json
+          export TASK_EXECUTION_ROLE_ARN="${{ secrets.TASK_EXECUTION_ROLE_ARN }}"
+          export TASK_ROLE_ARN="${{ secrets.TASK_ROLE_ARN }}"
+          envsubst < taskdef.json > taskdef_temp.json
+          mv taskdef_temp.json taskdef.json
+
+          # Show generated artifacts for debugging
+          echo "----- appspec.yml -----"
+          cat appspec.yml
+          echo "----- taskdef.json -----"
+          cat taskdef.json
+
+          # Validate JSON syntax
+          jq empty taskdef.json
+
+          # Package into zip for CodePipeline / CodeDeploy
           zip -j deployment-artifacts.zip appspec.yml taskdef.json
 
-      # Step 9: Upload to S3 (must match pipeline SourceArtifact config)
       - name: Upload Deployment Artifacts to S3
         run: |
           aws s3 cp deployment-artifacts.zip s3://${{ secrets.ARTIFACT_BUCKET }}/deployment-artifacts/latest.zip
 
-      # Step 10: Trigger pipeline
       - name: Trigger CodePipeline
         run: aws codepipeline start-pipeline-execution --name java-full-stack-Pipeline

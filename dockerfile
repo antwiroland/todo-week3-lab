@@ -26,7 +26,7 @@ RUN ./mvnw package -DskipTests
 # ------------------------------------------------
 # Stage 2: Create the runtime image
 # ------------------------------------------------
-FROM eclipse-temurin:21-jdk-alpine
+FROM eclipse-temurin:17-jre
 
 # Set working directory
 WORKDIR /app
